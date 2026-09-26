@@ -1,0 +1,177 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Job Market Analytics Dashboard</title>
+<script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+<style>
+:root{--bg:#f5f7fb;--card:#fff;--ink:#172033;--muted:#687386;--line:#e5e9f0;--accent:#2563eb}
+*{box-sizing:border-box}body{margin:0;font-family:Inter,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+header{background:#fff;border-bottom:1px solid var(--line);padding:24px 34px}
+h1{margin:0 0 7px;font-size:28px} header p{margin:0;color:var(--muted);font-size:14px}
+.tabs{display:flex;gap:8px;padding:14px 34px;background:#fff;border-bottom:1px solid var(--line)}
+.tab{border:0;background:#eef2f7;padding:10px 18px;border-radius:9px;cursor:pointer;font-weight:600;color:#4b5563}.tab.active{background:var(--accent);color:#fff}
+.wrap{padding:22px 34px;max-width:1600px;margin:auto}
+.filters{display:grid;grid-template-columns:repeat(5,minmax(150px,1fr));gap:12px;margin-bottom:18px}
+.filter{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px}
+.filter label{display:block;font-size:11px;font-weight:700;color:var(--muted);margin-bottom:6px;text-transform:uppercase}
+select{width:100%;border:1px solid #d9dee8;border-radius:7px;padding:9px;background:#fff;color:var(--ink)}
+.kpis{display:grid;grid-template-columns:repeat(5,1fr);gap:12px;margin-bottom:18px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:16px}.kpi .v{font-size:25px;font-weight:750;margin-top:5px}.kpi .l{font-size:12px;color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:10px;min-height:350px}.card h3{font-size:14px;margin:5px 8px 0}.chart{height:310px}
+.note{font-size:12px;color:var(--muted);margin:0 0 14px}.status{font-size:12px;color:var(--muted);padding:5px 0}
+@media(max-width:900px){.filters,.kpis,.grid{grid-template-columns:1fr}.wrap{padding:16px}.tabs{padding-left:16px}.card{min-height:320px}}
+</style>
+</head>
+<body>
+<header>
+<h1>Job Market Analytics</h1>
+<p>Interactive analysis of job postings, skills, experience, and compensation trends. Select any combination of filters to update every KPI and visual.</p>
+</header>
+<div class="tabs"><button class="tab active" onclick="showPage(1)">Overview</button><button class="tab" onclick="showPage(2)">Skills & Compensation</button></div>
+<div class="wrap">
+<div class="filters">
+<div class="filter"><label>Job Type / Title</label><select id="job"></select></div>
+<div class="filter"><label>Year</label><select id="year"></select></div>
+<div class="filter"><label>Skill Group</label><select id="group"></select></div>
+<div class="filter"><label>Experience</label><select id="exp"></select></div>
+<div class="filter"><label>Position Level</label><select id="level"></select></div>
+</div>
+<div class="status" id="status">Loading online dataset…</div>
+<section id="page1">
+<div class="kpis" id="kpis1"></div>
+<div class="grid">
+<div class="card"><h3>Job Postings by Year</h3><div id="c1" class="chart"></div></div>
+<div class="card"><h3>Top Job Titles</h3><div id="c2" class="chart"></div></div>
+<div class="card"><h3>Experience Distribution</h3><div id="c3" class="chart"></div></div>
+<div class="card"><h3>Position Level Distribution</h3><div id="c4" class="chart"></div></div>
+</div>
+</section>
+<section id="page2" style="display:none">
+<div class="kpis" id="kpis2"></div>
+<div class="grid">
+<div class="card"><h3>Top Skills in Filtered Postings</h3><div id="c5" class="chart"></div></div>
+<div class="card"><h3>Skill Group Mix</h3><div id="c6" class="chart"></div></div>
+<div class="card"><h3>Average Experience by Job Title</h3><div id="c7" class="chart"></div></div>
+<div class="card"><h3>Average Salary by Job Title</h3><div id="c8" class="chart"></div></div>
+</div>
+</section>
+</div>
+<script>
+const CSV_URL="https://raw.githubusercontent.com/GopiKrishnaMerugumala/analyzing-job-market-power-bi-main/main/job_postings.csv";
+let rows=[], page=1;
+
+const groupMap={
+"AI / Machine Learning":["ai","ml","machine_learning","deep_learning","tensorflow","keras","pytorch","nlp","computer_vision"],
+"Data / BI":["python","r","sql","tableau","powerbi","power_bi","dax","excel","pandas","numpy","sas","looker","bi","matlab"],
+"Cloud / DevOps":["aws","azure","gcp","cloud","devops","docker","kubernetes","ci/cd","cicd","terraform","redshift","snowflake"],
+"Database / Data Engineering":["database","mysql","postgresql","postgres","oracle","mongodb","nosql","etl","hadoop","spark","pyspark","airflow","bigquery","data_lake","data_lakes","warehousing","ssis","ssrs","ssas"],
+"Web / Software":["javascript","java","html","html5","css","react","node.js","node","angular","vue","php","ruby","swift","ios","frontend","backend","back-end","asp.net","c++","c","go","golang"],
+"Business / Productivity":["agile","scrum","excel","powerpoint","word","outlook","jira","microsoft","sharepoint","project_management"],
+"Other / General":[]
+};
+function skillGroup(s){
+ s=(s||"").toLowerCase().trim();
+ for(const [g,arr] of Object.entries(groupMap)) if(arr.includes(s)) return g;
+ return "Other / General";
+}
+function parseCSV(text){
+ const out=[]; let row=[], field="", q=false;
+ for(let i=0;i<text.length;i++){const c=text[i],n=text[i+1];
+  if(c=='"'){if(q&&n=='"'){field+='"';i++;}else q=!q}
+  else if(c==','&&!q){row.push(field);field=""}
+  else if((c=='\n'||c=='\r')&&!q){if(c=='\r'&&n=='\n')i++;row.push(field);if(row.length>1)out.push(row);row=[];field=""}
+  else field+=c;
+ }
+ if(field.length||row.length){row.push(field);if(row.length>1)out.push(row)}
+ const h=out.shift(); return out.map(a=>Object.fromEntries(h.map((k,i)=>[k,a[i]??""])));
+}
+function clean(r){
+ let skills=[]; try{let x=r["Job Skills"]||"[]"; x=x.replace(/^\s*\[/,"").replace(/\]\s*$/,""); skills=x?x.split(/,\s*(?=[a-zA-Z0-9_+./#-])/).map(s=>s.replace(/^['"]|['"]$/g,"").trim()).filter(Boolean):[]}catch(e){}
+ return {...r,year:(r["Job Posting Date"]||"").slice(0,4),expNum:Number(r["Years of Experience"])||0,minPay:Number(r["Minimum Pay"])||null,maxPay:Number(r["Maximum Pay"])||null,skills};
+}
+function uniq(a){return [...new Set(a)].sort((x,y)=>String(x).localeCompare(String(y),undefined,{numeric:true}))}
+function fill(id,vals,all="All"){
+ const s=document.getElementById(id),old=s.value;s.innerHTML="";
+ const opts=[all,...uniq(vals)]; opts.forEach(v=>{const o=document.createElement("option");o.value=v;o.textContent=v;s.appendChild(o)});
+ if(opts.includes(old))s.value=old; else s.value=all;
+}
+function initFilters(){
+ fill("job",rows.map(r=>r["Job Title"]||"Unknown"),"All job titles");
+ fill("year",rows.map(r=>r.year),"All years");
+ fill("group",rows.flatMap(r=>r.skills.map(skillGroup)),"All skill groups");
+ fill("exp",rows.map(r=>r["Years of Experience"]||"0"),"All experience");
+ fill("level",rows.map(r=>r["Job Position Level"]||"Unknown"),"All levels");
+ ["job","year","group","exp","level"].forEach(id=>document.getElementById(id).addEventListener("change",render));
+}
+function filtered(){
+ return rows.filter(r=>{
+  const job=document.getElementById("job").value,year=document.getElementById("year").value,g=document.getElementById("group").value,exp=document.getElementById("exp").value,lev=document.getElementById("level").value;
+  if(job!=="All job titles"&&(r["Job Title"]||"Unknown")!==job)return false;
+  if(year!=="All years"&&r.year!==year)return false;
+  if(exp!=="All experience"&&String(r["Years of Experience"]||"0")!==exp)return false;
+  if(lev!=="All levels"&&(r["Job Position Level"]||"Unknown")!==lev)return false;
+  if(g!=="All skill groups"&&!r.skills.some(s=>skillGroup(s)===g))return false;
+  return true;
+ });
+}
+function fmt(n){return n==null||isNaN(n)?"—":Number(n).toLocaleString()}
+function kpis(data){
+ const salaries=data.flatMap(r=>[r.minPay,r.maxPay].filter(x=>x!=null&&x>0));
+ const avgSal=salaries.length?salaries.reduce((a,b)=>a+b,0)/salaries.length:null;
+ const avgExp=data.length?data.reduce((a,r)=>a+r.expNum,0)/data.length:null;
+ const applicants=data.reduce((a,r)=>a+(Number(r["Number of Applicants"])||0),0);
+ return [data.length,uniq(data.map(r=>r["Company Name"]).filter(Boolean)).length,avgExp,avgSal,applicants];
+}
+function setKPI(id,data){
+ const [n,companies,avgExp,avgSal,apps]=kpis(data);
+ const labels=["Job postings","Companies","Avg. experience","Avg. salary","Applicants"];
+ const vals=[fmt(n),fmt(companies),avgExp==null?"—":avgExp.toFixed(1)+" yrs",avgSal==null?"—":"$"+Math.round(avgSal).toLocaleString(),fmt(apps)];
+ document.getElementById(id).innerHTML=vals.map((v,i)=>`<div class="kpi"><div class="l">${labels[i]}</div><div class="v">${v}</div></div>`).join("");
+}
+const base={paper_bgcolor:"rgba(0,0,0,0)",plot_bgcolor:"rgba(0,0,0,0)",font:{family:"Segoe UI,Arial",color:"#172033"},margin:{l:50,r:20,t:20,b:45},hovermode:"x unified"};
+function plot(id,data,layout){Plotly.react(id,data,{...base,...layout},{responsive:true,displayModeBar:false});}
+function counts(data,key,limit=10){
+ const m={};data.forEach(r=>{const k=r[key]||"Unknown";m[k]=(m[k]||0)+1});
+ return Object.entries(m).sort((a,b)=>b[1]-a[1]).slice(0,limit);
+}
+function render(){
+ const data=filtered();document.getElementById("status").textContent=`Showing ${fmt(data.length)} postings after all selected filters.`;
+ setKPI("kpis1",data);setKPI("kpis2",data);
+ const byYear=counts(data,"year",20);
+ plot("c1",[{x:byYear.map(x=>x[0]),y:byYear.map(x=>x[1]),type:"bar"}],{xaxis:{title:"Year"},yaxis:{title:"Postings"}});
+ const jt=counts(data,"Job Title",12);
+ plot("c2",[{x:jt.map(x=>x[1]).reverse(),y:jt.map(x=>x[0]).reverse(),type:"bar",orientation:"h"}],{xaxis:{title:"Postings"},yaxis:{automargin:true}});
+ const ex=counts(data,"Years of Experience",12);
+ plot("c3",[{x:ex.map(x=>x[0]),y:ex.map(x=>x[1]),type:"bar"}],{xaxis:{title:"Years"},yaxis:{title:"Postings"}});
+ const lv=counts(data,"Job Position Level",10);
+ plot("c4",[{labels:lv.map(x=>x[0]),values:lv.map(x=>x[1]),type:"pie",hole:.48}],{showlegend:true});
+ const sm={};data.forEach(r=>r.skills.forEach(s=>sm[s]=(sm[s]||0)+1));
+ const top=Object.entries(sm).sort((a,b)=>b[1]-a[1]).slice(0,15);
+ plot("c5",[{x:top.map(x=>x[1]).reverse(),y:top.map(x=>x[0]).reverse(),type:"bar",orientation:"h"}],{xaxis:{title:"Postings containing skill"},yaxis:{automargin:true}});
+ const gm={};data.forEach(r=>{const gs=new Set(r.skills.map(skillGroup));gs.forEach(g=>gm[g]=(gm[g]||0)+1)});
+ const gl=Object.entries(gm).sort((a,b)=>b[1]-a[1]);
+ plot("c6",[{labels:gl.map(x=>x[0]),values:gl.map(x=>x[1]),type:"pie",hole:.48}],{showlegend:true});
+ const em={};data.forEach(r=>{const k=r["Job Title"]||"Unknown";if(!em[k])em[k]=[0,0];em[k][0]+=r.expNum;em[k][1]++});
+ const ea=Object.entries(em).map(([k,v])=>[k,v[0]/v[1]]).sort((a,b)=>b[1]-a[1]).slice(0,12).reverse();
+ plot("c7",[{x:ea.map(x=>x[1]),y:ea.map(x=>x[0]),type:"bar",orientation:"h"}],{xaxis:{title:"Average years"},yaxis:{automargin:true}});
+ const sal={};data.forEach(r=>{if(r.minPay||r.maxPay){const k=r["Job Title"]||"Unknown";const v=[r.minPay,r.maxPay].filter(x=>x!=null&&x>0);const a=v.reduce((p,c)=>p+c,0)/v.length;if(!sal[k])sal[k]=[0,0];sal[k][0]+=a;sal[k][1]++}});
+ const sa=Object.entries(sal).map(([k,v])=>[k,v[0]/v[1]]).sort((a,b)=>b[1]-a[1]).slice(0,12).reverse();
+ plot("c8",[{x:sa.map(x=>x[1]),y:sa.map(x=>x[0]),type:"bar",orientation:"h"}],{xaxis:{title:"Average reported pay"},yaxis:{automargin:true}});
+}
+function showPage(n){page=n;document.getElementById("page1").style.display=n===1?"block":"none";document.getElementById("page2").style.display=n===2?"block":"none";document.querySelectorAll(".tab").forEach((b,i)=>b.classList.toggle("active",i===n-1));setTimeout(render,50)}
+async function load(){
+ try{
+  const res=await fetch(CSV_URL);if(!res.ok)throw new Error("Dataset request failed");
+  const text=await res.text();rows=parseCSV(text).map(clean);initFilters();render();
+ }catch(e){
+  document.getElementById("status").textContent="Could not load the online CSV. Please open this HTML while connected to the internet.";
+  console.error(e);
+ }
+}
+load();
+</script>
+</body>
+</html>
